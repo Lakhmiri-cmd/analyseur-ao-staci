@@ -3,7 +3,7 @@ import zipfile
 import io
 import json
 import re
-import anthropic
+import requests
 from docx import Document
 import openpyxl
 
@@ -121,10 +121,10 @@ def read_zip(data: bytes):
             except: pass
     return sorted(files, key=lambda x: x['score'], reverse=True)
 
-# ── CLAUDE ANALYSIS ───────────────────────────────────────────────
+# ── GROQ ANALYSIS ──────────────────────────────────────────────────
 def analyze_with_claude(text: str, filename: str) -> dict:
-    client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
-    
+    api_key = st.secrets["GROQ_API_KEY"]
+
     prompt = f"""Tu es un expert marchés publics qui analyse des dossiers AO pour STACI (logistique B2B : stockage, préparation commandes, expédition, gestion documentaire).
 
 STACI NE FAIT PAS : impression, transport pur, blanchisserie, restauration.
@@ -155,16 +155,28 @@ Réponds UNIQUEMENT en JSON valide, sans texte avant ni après :
   "notes": "observations importantes : marché réservé ESAT, hors périmètre, opportunité..."
 }}"""
 
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1200,
-        messages=[{"role": "user", "content": prompt}]
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "llama-3.3-70b-versatile",
+            "max_tokens": 1200,
+            "messages": [{"role": "user", "content": prompt}]
+        },
+        timeout=60
     )
-    
-    raw = message.content[0].text
+
+    if response.status_code != 200:
+        raise ValueError(f"Erreur API Groq ({response.status_code}): {response.text[:200]}")
+
+    data = response.json()
+    raw = data["choices"][0]["message"]["content"]
     cleaned = re.sub(r'```json\s*', '', raw)
     cleaned = re.sub(r'```\s*', '', cleaned).strip()
-    
+
     try:
         return json.loads(cleaned)
     except:
