@@ -10,7 +10,7 @@ import openpyxl
 # ── CONFIG PAGE ───────────────────────────────────────────────────
 st.set_page_config(
     page_title="STACI · Analyseur AO",
-    page_icon="",
+    page_icon="📂",
     layout="wide"
 )
 
@@ -35,20 +35,51 @@ st.markdown("""
 # ── HEADER ────────────────────────────────────────────────────────
 st.markdown("""
 <div class="main-header">
-  <h1> STACI · Analyseur Appels d'Offres</h1>
+  <h1>📂 STACI · Analyseur Appels d'Offres</h1>
   <span>Analyse automatique par IA · Stage M2 SIAD</span>
 </div>
 """, unsafe_allow_html=True)
 
-# ── PRIORITY FILES ────────────────────────────────────────────────
-PRIORITY = ['rc','reglement','consultation','cctp','technique','ccap','administratif','avis','aapc','dce','marche']
-SKIP = ['acte_engagement','acte engagement','bordereau','bpu','dqe','sla','reporting','grille tarif','emargement','etiquetage','courrier reponse']
+# ── PRIORITY FILES (calibré sur l'inventaire réel STACI/Gérard) ───
+# PRIORITÉ 1 — le besoin du CLIENT (ce qu'on veut analyser)
+PRIORITY_HIGH = [
+    'reglement de consultation', 'règlement de consultation', ' rc ', '-rc', '(rc)',
+    'cctp', 'cahier des charges', 'cdc',
+    'ccap',
+    'dce',
+    'avis de publication', 'avis d\'appel', 'aapc', 'avis en cours de publication',
+]
+# PRIORITÉ 2 — utile en complément (questions/réponses du client, BPU pour le montant)
+PRIORITY_MED = [
+    'questions', 'reponses', 'réponses',
+    'bpu', 'bordereau de prix', 'dqe',
+]
+# À EXCLURE — ce sont VOS documents de réponse, pas le besoin client
+SKIP = [
+    'memoire technique', 'mémoire technique', 'memoire_technique',
+    'reponse staci', 'réponse staci', 'reponse_staci',
+    'cadre de reponse', 'cadre de réponse', 'cadre_de_reponse',
+    'lettre de candidature', 'fiche de candidature', 'fiche_candidature',
+    'kbis', 'extrait kbis',
+    'declaration bic', 'déclaration bic',
+    'attestation', 'rib ',
+    'presentation de staci', 'présentation de staci',
+    'staci-vch', 'staci_vch',
+    'dc1', 'dc2', 'dc3', 'dc4',  # pièces administratives candidature, pas le besoin
+    'acte_engagement', 'acte d\'engagement', 'acte engagement',
+    'grille tarif', 'emargement', 'etiquetage',
+]
 
 def score_file(name):
     n = name.lower()
-    if any(s in n for s in SKIP): return -1
-    for i, p in enumerate(PRIORITY):
-        if p in n: return len(PRIORITY) - i
+    if any(s in n for s in SKIP):
+        return -1
+    for kw in PRIORITY_HIGH:
+        if kw in n:
+            return 20
+    for kw in PRIORITY_MED:
+        if kw in n:
+            return 10
     return 0
 
 # ── TEXT EXTRACTION ───────────────────────────────────────────────
@@ -206,7 +237,7 @@ uploaded = st.file_uploader(
 if uploaded:
     col1, col2 = st.columns([3,1])
     with col1:
-        st.info(f" **{uploaded.name}** · {uploaded.size/1024:.0f} Ko")
+        st.info(f"📂 **{uploaded.name}** · {uploaded.size/1024:.0f} Ko")
     with col2:
         analyze_btn = st.button("🔍 Analyser", type="primary", use_container_width=True)
     
@@ -219,37 +250,37 @@ if uploaded:
             if ext == 'zip':
                 files = read_zip(data)
                 if not files:
-                    st.error(" Aucun texte lisible trouvé dans le ZIP.")
+                    st.error("❌ Aucun texte lisible trouvé dans le ZIP.")
                     st.stop()
                 selected = files[:4]
                 text = '\n\n'.join([f"=== {f['name']} ===\n{f['text']}" for f in selected])
                 
                 # Show which files were read
-                with st.expander(f" Fichiers analysés ({len(selected)}/{len(files)} sélectionnés)"):
+                with st.expander(f"📋 Fichiers analysés ({len(selected)}/{len(files)} sélectionnés)"):
                     for f in files:
-                        icon = "" if f in selected else "⏭️"
+                        icon = "✅" if f in selected else "⏭️"
                         st.markdown(f"{icon} `{f['name']}` — score priorité: {f['score']}")
             else:
                 text = extract_pdf_text(data)
                 if len(text) < 100:
-                    st.error(" PDF illisible ou scanné sans OCR.")
+                    st.error("❌ PDF illisible ou scanné sans OCR.")
                     st.stop()
         
         # Step 2 — Claude analysis
-        with st.spinner(" Analyse IA en cours..."):
+        with st.spinner("🤖 Analyse IA en cours..."):
             try:
                 result = analyze_with_claude(text, uploaded.name)
             except Exception as e:
-                st.error(f" Erreur analyse : {e}")
+                st.error(f"❌ Erreur analyse : {e}")
                 st.stop()
         
-        st.success(" Analyse terminée !")
+        st.success("✅ Analyse terminée !")
         st.divider()
         
         # ── VERDICT ──────────────────────────────────────────────
         v = (result.get('verdict') or '').upper()
         css_class = 'verdict-go' if v=='GO' else 'verdict-nogo' if v=='NO-GO' else 'verdict-maybe'
-        emoji = '' if v=='GO' else '' if v=='NO-GO' else ''
+        emoji = '✅' if v=='GO' else '❌' if v=='NO-GO' else '⚠️'
         
         st.markdown(f"""
         <div class="{css_class}">
@@ -272,7 +303,7 @@ if uploaded:
         st.divider()
         
         # ── FICHE COLONNES EXCEL ──────────────────────────────────
-        st.markdown("###  Fiche — colonnes de ta synthèse STACI")
+        st.markdown("### 📋 Fiche — colonnes de ta synthèse STACI")
         
         fiche_data = {
             "Client / Entité": result.get('client') or '—',
@@ -297,7 +328,7 @@ if uploaded:
             st.divider()
         
         # ── LIGNE A COPIER ────────────────────────────────────────
-        st.markdown("###  Ligne à coller dans l'Excel")
+        st.markdown("### 📥 Ligne à coller dans l'Excel")
         
         ligne_excel = "\t".join([
             result.get('client') or '',
@@ -313,17 +344,17 @@ if uploaded:
         ])
         
         st.code(ligne_excel, language=None)
-        st.caption(" Copie ce texte → ouvre ton Excel → sélectionne la première cellule de la nouvelle ligne → Ctrl+V")
+        st.caption("💡 Copie ce texte → ouvre ton Excel → sélectionne la première cellule de la nouvelle ligne → Ctrl+V")
         
         # ── TEXTE EXTRAIT ─────────────────────────────────────────
-        with st.expander(" Texte extrait du dossier"):
+        with st.expander("📄 Texte extrait du dossier"):
             st.text(text[:3000] + ('...' if len(text) > 3000 else ''))
 
 else:
     # Empty state
     st.markdown("""
     <div style="background:white;border:2px dashed #C9CBD4;padding:48px;text-align:center;border-radius:4px;margin-top:20px">
-      <div style="font-size:48px;margin-bottom:12px"></div>
+      <div style="font-size:48px;margin-bottom:12px">📂</div>
       <h3 style="color:#3D4B6A;margin-bottom:8px">Déposez votre dossier AO</h3>
       <p style="color:#5A6278;font-size:13px">ZIP du dossier complet ou PDF unique<br>
       L'app lit automatiquement RC, CCTP, CCAP et extrait toutes les informations clés</p>
@@ -334,8 +365,8 @@ else:
     st.markdown("**Comment ça marche :**")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown("**1️ Déposer**\nGlissez le ZIP du dossier AO ou un PDF")
+        st.markdown("**1️⃣ Déposer**\nGlissez le ZIP du dossier AO ou un PDF")
     with col2:
-        st.markdown("**2️ Analyser**\nL'IA lit les fichiers et extrait les données")
+        st.markdown("**2️⃣ Analyser**\nL'IA lit les fichiers et extrait les données")
     with col3:
-        st.markdown("**3️ Copier**\nLigne prête à coller dans ta synthèse Excel")
+        st.markdown("**3️⃣ Copier**\nLigne prête à coller dans ta synthèse Excel")
