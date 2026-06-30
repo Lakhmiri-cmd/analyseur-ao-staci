@@ -12,7 +12,7 @@ import openpyxl
 # ── CONFIG PAGE ───────────────────────────────────────────────────
 st.set_page_config(
     page_title="STACI · Analyseur AO",
-    page_icon="📂",
+    page_icon="",
     layout="wide"
 )
 
@@ -37,7 +37,7 @@ st.markdown("""
 # ── HEADER ────────────────────────────────────────────────────────
 st.markdown("""
 <div class="main-header">
-  <h1>📂 STACI · Analyseur Appels d'Offres</h1>
+  <h1> STACI · Analyseur Appels d'Offres</h1>
   <span>Analyse automatique par IA · Stage M2 SIAD</span>
 </div>
 """, unsafe_allow_html=True)
@@ -366,7 +366,7 @@ uploaded = st.file_uploader(
 if uploaded:
     col1, col2 = st.columns([3,1])
     with col1:
-        st.info(f"📂 **{uploaded.name}** · {uploaded.size/1024:.0f} Ko")
+        st.info(f" **{uploaded.name}** · {uploaded.size/1024:.0f} Ko")
     with col2:
         analyze_btn = st.button("🔍 Analyser", type="primary", use_container_width=True)
     
@@ -379,7 +379,7 @@ if uploaded:
             if ext == 'zip':
                 files = read_zip(data)
                 if not files:
-                    st.error("❌ Aucun texte lisible trouvé dans le ZIP.")
+                    st.error(" Aucun texte lisible trouvé dans le ZIP.")
                     st.stop()
                 selected = files[:4]
                 text = '\n\n'.join([f"=== {f['name']} ===\n{f['text']}" for f in selected])
@@ -387,38 +387,38 @@ if uploaded:
                 # Show which files were read
                 with st.expander(f"📋 Fichiers analysés ({len(selected)}/{len(files)} sélectionnés)"):
                     for f in files:
-                        icon = "✅" if f in selected else "⏭️"
+                        icon = "" if f in selected else "⏭️"
                         st.markdown(f"{icon} `{f['name']}` — score priorité: {f['score']}")
             else:
                 text = extract_pdf_text(data)
                 if len(text) < 100:
-                    st.error("❌ PDF illisible ou scanné sans OCR.")
+                    st.error(" PDF illisible ou scanné sans OCR.")
                     st.stop()
         
         # Step 2 — Claude analysis
-        with st.spinner("🤖 Analyse IA en cours..."):
+        with st.spinner(" Analyse IA en cours..."):
             try:
                 result = analyze_with_claude(text, uploaded.name)
             except Exception as e:
-                st.error(f"❌ Erreur analyse : {e}")
+                st.error(f" Erreur analyse : {e}")
                 st.stop()
         
-        st.success("✅ Analyse terminée !")
+        st.success(" Analyse terminée !")
 
         # Sauvegarde automatique dans l'historique permanent (avec contrôle doublon)
-        with st.spinner("💾 Enregistrement dans l'historique..."):
+        with st.spinner(" Enregistrement dans l'historique..."):
             history_df, is_duplicate = add_row_to_history(result, uploaded.name)
         if is_duplicate:
-            st.warning(f"⚠️ Ce client (« {result.get('client')} ») est déjà présent dans l'historique — non ré-ajouté pour éviter un doublon.")
+            st.warning(f" Ce client (« {result.get('client')} ») est déjà présent dans l'historique — non ré-ajouté pour éviter un doublon.")
         else:
-            st.success(f"💾 Ajouté à l'historique — {len(history_df)} AOs analysés au total")
+            st.success(f" Ajouté à l'historique — {len(history_df)} AOs analysés au total")
 
         st.divider()
         
         # ── VERDICT ──────────────────────────────────────────────
         v = (result.get('verdict') or '').upper()
         css_class = 'verdict-go' if v=='GO' else 'verdict-nogo' if v=='NO-GO' else 'verdict-maybe'
-        emoji = '✅' if v=='GO' else '❌' if v=='NO-GO' else '⚠️'
+        emoji = '' if v=='GO' else '' if v=='NO-GO' else ''
         
         st.markdown(f"""
         <div class="{css_class}">
@@ -445,7 +445,7 @@ if uploaded:
         lots = result.get('montants_par_lot') or []
         if not montant and not lots:
             raison = result.get('montant_non_estimable_raison') or "Aucune volumétrie (commandes/an, palettes, références, poids) trouvée dans le CCTP — estimation impossible selon la règle de Gérard Szejner."
-            st.warning(f"⚠️ **Montant non estimable** — {raison}")
+            st.warning(f" **Montant non estimable** — {raison}")
             if result.get('volumetrie_trouvee'):
                 st.caption(f"Volumétrie partielle repérée : {result.get('volumetrie_trouvee')}")
         elif lots:
@@ -455,21 +455,21 @@ if uploaded:
                 st.markdown(f"**{l.get('lot','Lot')}** — {fmt_montant(m) if m else 'montant non précisé'}  \n{l.get('description','')}")
             st.caption("Pas de montant global unique fourni dans le dossier — détail par lot ci-dessus, pas de somme inventée.")
         else:
-            st.success(f"✅ Montant basé sur : {result.get('volumetrie_trouvee') or 'donnée chiffrée explicite du dossier'}")
+            st.success(f" Montant basé sur : {result.get('volumetrie_trouvee') or 'donnée chiffrée explicite du dossier'}")
 
         # ── BLOC RADAR / RÉCURRENCE (logique Gérard) ───────────────
-        st.markdown("### 🎯 Radar — retour théorique de l'AO")
+        st.markdown("###  Radar — retour théorique de l'AO")
         type_recur = result.get('type_recurrence') or 'Inconnue'
         date_retour = result.get('date_retour_estimee')
         if date_retour:
-            st.info(f"📅 **Retour estimé : {date_retour}** · Type : {type_recur}  \nBasé sur la clause exacte : « {result.get('duree_contrat') or 'non précisée'} »")
+            st.info(f" **Retour estimé : {date_retour}** · Type : {type_recur}  \nBasé sur la clause exacte : « {result.get('duree_contrat') or 'non précisée'} »")
         else:
             st.caption("Date de retour non calculable — la clause de durée/reconduction n'a pas été trouvée explicitement dans le texte (règle Gérard : pas d'invention).")
 
         st.divider()
         
         # ── FICHE COLONNES EXCEL ──────────────────────────────────
-        st.markdown("### 📋 Fiche — colonnes de ta synthèse STACI")
+        st.markdown("###  Fiche — colonnes de ta synthèse STACI")
         
         fiche_data = {
             "Client / Entité": result.get('client') or '—',
@@ -495,7 +495,7 @@ if uploaded:
             st.divider()
         
         # ── LIGNE A COPIER ────────────────────────────────────────
-        st.markdown("### 📥 Ligne à coller dans l'Excel")
+        st.markdown("###  Ligne à coller dans l'Excel")
         
         ligne_excel = "\t".join([
             result.get('client') or '',
@@ -511,17 +511,17 @@ if uploaded:
         ])
         
         st.code(ligne_excel, language=None)
-        st.caption("💡 Copie ce texte → ouvre ton Excel → sélectionne la première cellule de la nouvelle ligne → Ctrl+V")
+        st.caption(" Copie ce texte → ouvre ton Excel → sélectionne la première cellule de la nouvelle ligne → Ctrl+V")
         
         # ── TEXTE EXTRAIT ─────────────────────────────────────────
-        with st.expander("📄 Texte extrait du dossier"):
+        with st.expander(" Texte extrait du dossier"):
             st.text(text[:3000] + ('...' if len(text) > 3000 else ''))
 
 else:
     # Empty state
     st.markdown("""
     <div style="background:white;border:2px dashed #C9CBD4;padding:48px;text-align:center;border-radius:4px;margin-top:20px">
-      <div style="font-size:48px;margin-bottom:12px">📂</div>
+      <div style="font-size:48px;margin-bottom:12px"></div>
       <h3 style="color:#3D4B6A;margin-bottom:8px">Déposez votre dossier AO</h3>
       <p style="color:#5A6278;font-size:13px">ZIP du dossier complet ou PDF unique<br>
       L'app lit automatiquement RC, CCTP, CCAP et extrait toutes les informations clés</p>
@@ -540,7 +540,7 @@ else:
 
 # ── HISTORIQUE COMPLET (toujours visible, hors du if/else upload) ──
 st.divider()
-st.markdown("## 📚 Historique de toutes les analyses")
+st.markdown("##  Historique de toutes les analyses")
 
 hist_df = load_history()
 
@@ -552,7 +552,7 @@ if len(hist_df) > 0:
     with col_dl1:
         csv_data = hist_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
-            "⬇️ Télécharger en CSV",
+            " Télécharger en CSV",
             csv_data,
             "historique_AO_STACI.csv",
             "text/csv",
@@ -562,7 +562,7 @@ if len(hist_df) > 0:
         excel_buffer = io.BytesIO()
         hist_df.to_excel(excel_buffer, index=False, engine='openpyxl')
         st.download_button(
-            "⬇️ Télécharger en Excel",
+            " Télécharger en Excel",
             excel_buffer.getvalue(),
             "historique_AO_STACI.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
