@@ -1,5 +1,5 @@
 streamlit
-anthropic
+requests
 python-docx
 openpyxl
 pymupdf
