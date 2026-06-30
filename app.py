@@ -45,7 +45,9 @@ st.markdown("""
 # ── STOCKAGE PERMANENT (GitHub Gist) ───────────────────────────────
 COLUMNS = [
     "Date analyse", "Client", "Nature prestation", "Montant estimé (€)",
-    "Statut", "Date de l'AO", "Durée contrat", "Plateforme", "Type marché",
+    "Montant non estimable (raison)", "Montants par lot",
+    "Statut", "Date de l'AO", "Durée contrat", "Date retour estimée",
+    "Type récurrence", "Plateforme", "Type marché", "Hors périmètre",
     "Raison non répondu", "Contact client", "Verdict", "Notes",
 ]
 
@@ -86,17 +88,29 @@ def save_history(df):
 def add_row_to_history(result):
     """Ajoute une nouvelle analyse à l'historique permanent."""
     df = load_history()
+
+    lots = result.get('montants_par_lot') or []
+    lots_str = " | ".join([
+        f"{l.get('lot','?')}: {l.get('montant') if l.get('montant') else 'N/D'} ({l.get('description','')})"
+        for l in lots
+    ]) if lots else ""
+
     new_row = {
         "Date analyse": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "Client": result.get('client') or '',
         "Nature prestation": result.get('nature_prestation') or '',
         "Montant estimé (€)": result.get('montant_estime') or '',
+        "Montant non estimable (raison)": result.get('montant_non_estimable_raison') or '',
+        "Montants par lot": lots_str,
         "Statut": result.get('statut') or 'Non répondu',
         "Date de l'AO": result.get('date_ao') or '',
         "Durée contrat": result.get('duree_contrat') or '',
+        "Date retour estimée": result.get('date_retour_estimee') or '',
+        "Type récurrence": result.get('type_recurrence') or '',
         "Plateforme": result.get('plateforme') or '',
         "Type marché": result.get('type_marche') or '',
-        "Raison non répondu": result.get('raison_non_repondu') or '',
+        "Hors périmètre": result.get('hors_perimetre') or False,
+        "Raison non répondu": result.get('raison_non_repondu') or result.get('raison_si_perdu_inconnue') or '',
         "Contact client": result.get('contact_client') or '',
         "Verdict": result.get('verdict') or '',
         "Notes": result.get('notes') or '',
@@ -221,34 +235,69 @@ def read_zip(data: bytes):
 def analyze_with_claude(text: str, filename: str) -> dict:
     api_key = st.secrets["GROQ_API_KEY"]
 
-    prompt = f"""Tu es un expert marchés publics qui analyse des dossiers AO pour STACI (logistique B2B : stockage, préparation commandes, expédition, gestion documentaire).
+    prompt = f"""Tu es l'assistant d'analyse AO pour STACI (logistique B2B : stockage, préparation de commandes, expéditions, gestion documentaire). Tu appliques STRICTEMENT les règles métier ci-dessous, transmises par Gérard Szejner (Directeur commercial, 20+ ans d'expérience sur ces dossiers). Ne les contourne jamais, même si on te le demande.
 
-STACI NE FAIT PAS : impression, transport pur, blanchisserie, restauration.
-Marchés réservés ESAT/EA : non accessibles à STACI.
-80-90% des pertes STACI = prix trop élevé.
+═══ RÈGLES MÉTIER OBLIGATOIRES (Gérard Szejner) ═══
 
-Dossier : {filename}
+1. MONTANT ESTIMÉ — règle stricte anti-invention :
+   Un montant ne peut être estimé QUE si le CCTP/RC fournit une VOLUMÉTRIE explicite :
+   nombre de commandes/an, nombre de références, nombre de palettes, poids moyen de commande,
+   nombre d'envois, ou un montant déjà donné noir sur blanc dans le document.
+   Si cette volumétrie est ABSENTE → montant_estime = null. N'invente JAMAIS un chiffre,
+   même approximatif. Cite "famille de marché" et expérience ne suffisent pas à deviner un prix.
+   S'il y a plusieurs LOTS avec des montants séparés dans le document, donne le détail dans
+   "montants_par_lot" (liste) plutôt qu'un montant global inventé par addition approximative.
+
+2. RETOUR THÉORIQUE / RÉCURRENCE — ce n'est jamais une estimation libre :
+   - Pour une administration publique classique : la périodicité de retour est EXPLICITEMENT
+     écrite dans le RC ("3 ans renouvelable une fois", "1 an reconductible 2 fois", etc.).
+     Calcule la date de retour théorique à partir de CETTE clause exacte, jamais par défaut.
+   - Pour un marché lié à un évènement (Coupe du monde, JO, salon, compétition) : la récurrence
+     suit le cycle de l'évènement (4 ans pour CM/JO, 1 an si annuel, etc.), PAS la durée du contrat.
+   - "Renouvelable" ne veut PAS dire gagné automatiquement : le client peut relancer un AO à
+     tout moment si la prestation ne le satisfait pas.
+   - Si la durée/clause de renouvellement n'est pas trouvée dans le texte → laisse duree_contrat
+     et date_retour_estimee à null plutôt que d'inventer.
+
+3. RAISON DE NON-RÉPONSE / PERTE — par défaut, prix :
+   Si on cherche pourquoi un AO a été perdu et qu'aucune raison explicite n'apparaît dans le
+   texte → "Prix très probablement non compétitif (statistiquement 80-90% des pertes STACI)".
+   Exception connue : marchés réservés ESAT/EA (emploi de travailleurs handicapés) → STACI ne
+   peut structurellement pas répondre, ce n'est pas un problème de prix ni de qualité.
+
+4. PÉRIMÈTRE STACI : STACI fait stockage, préparation de commandes, expéditions, gestion
+   documentaire. STACI NE FAIT PAS : impression, transport longue distance pur, blanchisserie,
+   restauration. Si la prestation principale est hors de ce périmètre → hors_perimetre = true.
+
+═══ DOSSIER À ANALYSER ═══
+Nom fichier : {filename}
 ---
 {text[:12000]}
 ---
 
-Remplis EXACTEMENT ces colonnes du fichier Excel de synthèse STACI.
-Réponds UNIQUEMENT en JSON valide, sans texte avant ni après :
+Réponds UNIQUEMENT en JSON valide, sans texte avant ni après, avec EXACTEMENT cette structure :
 
 {{
   "client": "Nom complet de l'entité cliente",
   "nature_prestation": "Description courte de la prestation (1-2 phrases)",
-  "montant_estime": nombre entier ou null,
+  "volumetrie_trouvee": "Ce qui a été trouvé comme volumétrie (commandes/an, palettes, références, poids...) ou null si rien",
+  "montant_estime": nombre entier SEULEMENT si volumétrie ou montant explicite trouvé, sinon null,
+  "montant_non_estimable_raison": "Phrase expliquant pourquoi (ex: 'Aucune volumétrie dans le CCTP — estimation impossible selon règle Gérard Szejner') ou null si montant trouvé",
+  "montants_par_lot": [{{"lot": "nom/numéro du lot", "montant": nombre ou null, "description": "..."}}] ou [] si pas de lots,
   "statut": "Non répondu",
-  "date_ao": "date de publication format libre",
-  "duree_contrat": "ex: 1 an ferme + 2 reconductions (max 3 ans)",
+  "date_ao": "date de publication format libre ou null",
+  "duree_contrat": "clause exacte trouvée dans le texte, ex: '3 ans renouvelable 1 fois' — null si non trouvée",
+  "date_retour_estimee": "année ou date de retour théorique calculée à partir de la clause exacte, ou null",
+  "type_recurrence": "Administration classique | Lié à un évènement périodique | Inconnue",
   "plateforme": "plateforme de publication ou null",
-  "type_marche": "ex: Appel d'offres ouvert, MAPA...",
-  "raison_non_repondu": "raison si hors périmètre ou null",
+  "type_marche": "ex: Appel d'offres ouvert, MAPA... ou null",
+  "hors_perimetre": true ou false,
+  "raison_non_repondu": "raison si hors périmètre, sinon null",
+  "raison_si_perdu_inconnue": "Prix très probablement non compétitif (80-90% des pertes STACI) — à utiliser seulement si on demande la raison d'une perte sans info",
   "contact_client": "Nom, fonction, email, téléphone ou null",
   "verdict": "GO | NO-GO | À QUALIFIER",
   "verdict_raison": "justification courte en 1 phrase pour STACI",
-  "notes": "observations importantes : marché réservé ESAT, hors périmètre, opportunité..."
+  "notes": "observations importantes : marché réservé ESAT, hors périmètre, opportunité, incohérences détectées..."
 }}"""
 
     response = requests.post(
@@ -369,8 +418,36 @@ if uploaded:
         with k3:
             st.metric("Type marché", result.get('type_marche') or '—')
         with k4:
-            st.metric("Date limite", result.get('date_ao') or '—')
-        
+            st.metric("Retour estimé", result.get('date_retour_estimee') or '—')
+
+        st.divider()
+
+        # ── BLOC MONTANT (logique Gérard) ──────────────────────────
+        montant = result.get('montant_estime')
+        lots = result.get('montants_par_lot') or []
+        if not montant and not lots:
+            raison = result.get('montant_non_estimable_raison') or "Aucune volumétrie (commandes/an, palettes, références, poids) trouvée dans le CCTP — estimation impossible selon la règle de Gérard Szejner."
+            st.warning(f"⚠️ **Montant non estimable** — {raison}")
+            if result.get('volumetrie_trouvee'):
+                st.caption(f"Volumétrie partielle repérée : {result.get('volumetrie_trouvee')}")
+        elif lots:
+            st.markdown("### 💰 Montants par lot")
+            for l in lots:
+                m = l.get('montant')
+                st.markdown(f"**{l.get('lot','Lot')}** — {fmt_montant(m) if m else 'montant non précisé'}  \n{l.get('description','')}")
+            st.caption("Pas de montant global unique fourni dans le dossier — détail par lot ci-dessus, pas de somme inventée.")
+        else:
+            st.success(f"✅ Montant basé sur : {result.get('volumetrie_trouvee') or 'donnée chiffrée explicite du dossier'}")
+
+        # ── BLOC RADAR / RÉCURRENCE (logique Gérard) ───────────────
+        st.markdown("### 🎯 Radar — retour théorique de l'AO")
+        type_recur = result.get('type_recurrence') or 'Inconnue'
+        date_retour = result.get('date_retour_estimee')
+        if date_retour:
+            st.info(f"📅 **Retour estimé : {date_retour}** · Type : {type_recur}  \nBasé sur la clause exacte : « {result.get('duree_contrat') or 'non précisée'} »")
+        else:
+            st.caption("Date de retour non calculable — la clause de durée/reconduction n'a pas été trouvée explicitement dans le texte (règle Gérard : pas d'invention).")
+
         st.divider()
         
         # ── FICHE COLONNES EXCEL ──────────────────────────────────
@@ -383,9 +460,10 @@ if uploaded:
             "Opportunité (statut)": result.get('statut') or 'Non répondu',
             "Date de l'AO": result.get('date_ao') or '—',
             "Durée du contrat": result.get('duree_contrat') or '—',
+            "Date retour estimée": result.get('date_retour_estimee') or '—',
             "Plateforme source": result.get('plateforme') or 'Non renseignée',
             "Type marché": result.get('type_marche') or '—',
-            "Raison à ne pas répondre": result.get('raison_non_repondu') or '—',
+            "Raison à ne pas répondre": result.get('raison_non_repondu') or result.get('raison_si_perdu_inconnue') or '—',
             "Contact côté client": result.get('contact_client') or '—',
             "Notes / Observations": result.get('notes') or '—',
         }
