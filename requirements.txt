@@ -3,3 +3,4 @@ requests
 python-docx
 openpyxl
 pymupdf
+pandas
