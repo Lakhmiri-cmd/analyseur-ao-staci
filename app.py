@@ -4,6 +4,8 @@ import io
 import json
 import re
 import requests
+import pandas as pd
+from datetime import datetime
 from docx import Document
 import openpyxl
 
@@ -39,6 +41,69 @@ st.markdown("""
   <span>Analyse automatique par IA · Stage M2 SIAD</span>
 </div>
 """, unsafe_allow_html=True)
+
+# ── STOCKAGE PERMANENT (GitHub Gist) ───────────────────────────────
+COLUMNS = [
+    "Date analyse", "Client", "Nature prestation", "Montant estimé (€)",
+    "Statut", "Date de l'AO", "Durée contrat", "Plateforme", "Type marché",
+    "Raison non répondu", "Contact client", "Verdict", "Notes",
+]
+
+def get_gist_headers():
+    return {
+        "Authorization": f"token {st.secrets['GITHUB_TOKEN']}",
+        "Accept": "application/vnd.github+json"
+    }
+
+def load_history():
+    """Charge l'historique depuis le Gist GitHub."""
+    try:
+        gist_id = st.secrets["GIST_ID"]
+        resp = requests.get(f"https://api.github.com/gists/{gist_id}", headers=get_gist_headers(), timeout=15)
+        if resp.status_code == 200:
+            content = resp.json()["files"]["historique_ao.csv"]["content"]
+            if content.strip():
+                return pd.read_csv(io.StringIO(content))
+        return pd.DataFrame(columns=COLUMNS)
+    except Exception:
+        return pd.DataFrame(columns=COLUMNS)
+
+def save_history(df):
+    """Sauvegarde l'historique complet dans le Gist GitHub."""
+    try:
+        gist_id = st.secrets["GIST_ID"]
+        csv_content = df.to_csv(index=False)
+        requests.patch(
+            f"https://api.github.com/gists/{gist_id}",
+            headers=get_gist_headers(),
+            json={"files": {"historique_ao.csv": {"content": csv_content}}},
+            timeout=15
+        )
+        return True
+    except Exception:
+        return False
+
+def add_row_to_history(result):
+    """Ajoute une nouvelle analyse à l'historique permanent."""
+    df = load_history()
+    new_row = {
+        "Date analyse": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "Client": result.get('client') or '',
+        "Nature prestation": result.get('nature_prestation') or '',
+        "Montant estimé (€)": result.get('montant_estime') or '',
+        "Statut": result.get('statut') or 'Non répondu',
+        "Date de l'AO": result.get('date_ao') or '',
+        "Durée contrat": result.get('duree_contrat') or '',
+        "Plateforme": result.get('plateforme') or '',
+        "Type marché": result.get('type_marche') or '',
+        "Raison non répondu": result.get('raison_non_repondu') or '',
+        "Contact client": result.get('contact_client') or '',
+        "Verdict": result.get('verdict') or '',
+        "Notes": result.get('notes') or '',
+    }
+    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+    save_history(df)
+    return df
 
 # ── PRIORITY FILES (calibré sur l'inventaire réel STACI/Gérard) ───
 # PRIORITÉ 1 — le besoin du CLIENT (ce qu'on veut analyser)
@@ -275,6 +340,12 @@ if uploaded:
                 st.stop()
         
         st.success("✅ Analyse terminée !")
+
+        # Sauvegarde automatique dans l'historique permanent
+        with st.spinner("💾 Enregistrement dans l'historique..."):
+            history_df = add_row_to_history(result)
+        st.success(f"💾 Ajouté à l'historique — {len(history_df)} AOs analysés au total")
+
         st.divider()
         
         # ── VERDICT ──────────────────────────────────────────────
@@ -370,3 +441,36 @@ else:
         st.markdown("**2️⃣ Analyser**\nL'IA lit les fichiers et extrait les données")
     with col3:
         st.markdown("**3️⃣ Copier**\nLigne prête à coller dans ta synthèse Excel")
+
+# ── HISTORIQUE COMPLET (toujours visible, hors du if/else upload) ──
+st.divider()
+st.markdown("## 📚 Historique de toutes les analyses")
+
+hist_df = load_history()
+
+if len(hist_df) > 0:
+    st.caption(f"{len(hist_df)} AOs analysés au total — sauvegardés en permanence")
+    st.dataframe(hist_df, use_container_width=True, height=300)
+
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        csv_data = hist_df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            "⬇️ Télécharger en CSV",
+            csv_data,
+            "historique_AO_STACI.csv",
+            "text/csv",
+            use_container_width=True
+        )
+    with col_dl2:
+        excel_buffer = io.BytesIO()
+        hist_df.to_excel(excel_buffer, index=False, engine='openpyxl')
+        st.download_button(
+            "⬇️ Télécharger en Excel",
+            excel_buffer.getvalue(),
+            "historique_AO_STACI.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+else:
+    st.info("Aucune analyse encore enregistrée. Déposez un dossier AO ci-dessus pour commencer.")
