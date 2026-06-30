@@ -85,9 +85,18 @@ def save_history(df):
     except Exception:
         return False
 
-def add_row_to_history(result):
-    """Ajoute une nouvelle analyse à l'historique permanent."""
+def add_row_to_history(result, filename=""):
+    """Ajoute une nouvelle analyse à l'historique permanent (avec détection de doublon)."""
     df = load_history()
+
+    client = result.get('client') or ''
+    nature = result.get('nature_prestation') or ''
+
+    # Détection de doublon : même client + prestation très proche déjà présents
+    if len(df) > 0 and client:
+        existing = df[df['Client'].astype(str).str.strip().str.lower() == client.strip().lower()]
+        if len(existing) > 0:
+            return df, True  # doublon détecté, on ne ré-enregistre pas
 
     lots = result.get('montants_par_lot') or []
     lots_str = " | ".join([
@@ -97,8 +106,8 @@ def add_row_to_history(result):
 
     new_row = {
         "Date analyse": datetime.now().strftime("%d/%m/%Y %H:%M"),
-        "Client": result.get('client') or '',
-        "Nature prestation": result.get('nature_prestation') or '',
+        "Client": client,
+        "Nature prestation": nature,
         "Montant estimé (€)": result.get('montant_estime') or '',
         "Montant non estimable (raison)": result.get('montant_non_estimable_raison') or '',
         "Montants par lot": lots_str,
@@ -117,7 +126,7 @@ def add_row_to_history(result):
     }
     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     save_history(df)
-    return df
+    return df, False
 
 # ── PRIORITY FILES (calibré sur l'inventaire réel STACI/Gérard) ───
 # PRIORITÉ 1 — le besoin du CLIENT (ce qu'on veut analyser)
@@ -248,16 +257,21 @@ def analyze_with_claude(text: str, filename: str) -> dict:
    S'il y a plusieurs LOTS avec des montants séparés dans le document, donne le détail dans
    "montants_par_lot" (liste) plutôt qu'un montant global inventé par addition approximative.
 
-2. RETOUR THÉORIQUE / RÉCURRENCE — ce n'est jamais une estimation libre :
+2. RETOUR THÉORIQUE / RÉCURRENCE — ce n'est jamais une estimation libre, mais SI tu as la clause,
+   tu DOIS calculer, ne laisse pas vide par excès de prudence :
    - Pour une administration publique classique : la périodicité de retour est EXPLICITEMENT
      écrite dans le RC ("3 ans renouvelable une fois", "1 an reconductible 2 fois", etc.).
-     Calcule la date de retour théorique à partir de CETTE clause exacte, jamais par défaut.
+     CALCULE OBLIGATOIREMENT date_retour_estimee = année de l'AO + durée totale max (ferme + reconductions).
+     Exemple concret : AO publié en 2025, clause "1 an renouvelable" (= 1 an ferme + 1 an
+     reconduction = 2 ans max) → date_retour_estimee = "2027". Si tu as date_ao ET duree_contrat,
+     tu as TOUJOURS assez d'info pour remplir date_retour_estimee — ne le laisse null que si
+     l'un des deux manque vraiment dans le texte.
    - Pour un marché lié à un évènement (Coupe du monde, JO, salon, compétition) : la récurrence
      suit le cycle de l'évènement (4 ans pour CM/JO, 1 an si annuel, etc.), PAS la durée du contrat.
    - "Renouvelable" ne veut PAS dire gagné automatiquement : le client peut relancer un AO à
      tout moment si la prestation ne le satisfait pas.
-   - Si la durée/clause de renouvellement n'est pas trouvée dans le texte → laisse duree_contrat
-     et date_retour_estimee à null plutôt que d'inventer.
+   - Si VRAIMENT ni date_ao ni duree_contrat ne sont trouvés dans le texte → alors seulement
+     laisse date_retour_estimee à null.
 
 3. RAISON DE NON-RÉPONSE / PERTE — par défaut, prix :
    Si on cherche pourquoi un AO a été perdu et qu'aucune raison explicite n'apparaît dans le
@@ -309,6 +323,7 @@ Réponds UNIQUEMENT en JSON valide, sans texte avant ni après, avec EXACTEMENT 
         json={
             "model": "llama-3.3-70b-versatile",
             "max_tokens": 1200,
+            "temperature": 0,
             "messages": [{"role": "user", "content": prompt}]
         },
         timeout=60
@@ -390,10 +405,13 @@ if uploaded:
         
         st.success("✅ Analyse terminée !")
 
-        # Sauvegarde automatique dans l'historique permanent
+        # Sauvegarde automatique dans l'historique permanent (avec contrôle doublon)
         with st.spinner("💾 Enregistrement dans l'historique..."):
-            history_df = add_row_to_history(result)
-        st.success(f"💾 Ajouté à l'historique — {len(history_df)} AOs analysés au total")
+            history_df, is_duplicate = add_row_to_history(result, uploaded.name)
+        if is_duplicate:
+            st.warning(f"⚠️ Ce client (« {result.get('client')} ») est déjà présent dans l'historique — non ré-ajouté pour éviter un doublon.")
+        else:
+            st.success(f"💾 Ajouté à l'historique — {len(history_df)} AOs analysés au total")
 
         st.divider()
         
